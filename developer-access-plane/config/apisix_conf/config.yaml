@@ -1,0 +1,21 @@
+deployment:
+  role: traditional
+  role_data_plane:
+    config_provider: etcd
+  admin:
+    allow_admin:
+      - 0.0.0.0/0
+    admin_key:
+      - name: admin
+        key: edd1c9f034335f136f87ad84b625c8f1
+        role: admin
+    admin_listen:
+      ip: 0.0.0.0
+      port: 9180
+  etcd:
+    host:
+      - "http://etcd:2379"
+    prefix: "/apisix"
+
+apisix:
+  node_listen: 9080

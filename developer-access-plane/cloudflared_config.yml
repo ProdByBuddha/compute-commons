@@ -1,0 +1,27 @@
+tunnel: 9c9007be-a435-4ada-b8d5-14ef7c98746c
+credentials-file: /home/buddha/.cloudflared/9c9007be-a435-4ada-b8d5-14ef7c98746c.json
+origincert: /home/buddha/.cloudflared/cert.pem
+
+ingress:
+  # Traefik Router (Ports 80/443)
+  - hostname: computecommons.org
+    service: http://127.0.0.1:80
+  - hostname: www.computecommons.org
+    service: http://127.0.0.1:80
+  - hostname: auth.computecommons.org
+    service: http://127.0.0.1:80
+  - hostname: billing.computecommons.org
+    service: http://127.0.0.1:80
+  - hostname: api.billing.computecommons.org
+    service: http://127.0.0.1:80
+  - hostname: api.computecommons.org
+    service: http://127.0.0.1:80
+  - hostname: admin.api.computecommons.org
+    service: http://127.0.0.1:80
+    
+  # Existing SSH Access
+  - hostname: ssh.computecommons.org
+    service: ssh://127.0.0.1:2222
+    
+  # Default Catch-All
+  - service: http_status:404

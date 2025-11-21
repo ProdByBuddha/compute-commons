@@ -1,0 +1,215 @@
+version: "3.8"
+
+services:
+  traefik:
+    image: traefik:latest
+    command:
+      - "--configFile=/etc/traefik/traefik.yaml"
+    environment:
+      - TRAEFIK_PROVIDERS_DOCKER_APIVERSION=1.44
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080" # Dashboard
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - "./config/traefik.yaml:/etc/traefik/traefik.yaml"
+    networks:
+      - compute-net
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: shared_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - compute-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:alpine
+    networks:
+      - compute-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0.1
+    command: start-dev
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/shared_db
+      KC_DB_USERNAME: postgres
+      KC_DB_PASSWORD: password
+      KC_DB_SCHEMA: public
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_HOSTNAME: auth.computecommons.org
+      KC_PROXY: edge
+    ports:
+      - "8180:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.keycloak.rule=Host(`auth.computecommons.org`)"
+      - "traefik.http.routers.keycloak.entrypoints=web,websecure"
+      # - "traefik.http.routers.keycloak.tls=true"
+      - "traefik.http.services.keycloak.loadbalancer.server.port=8080"
+    networks:
+      - compute-net
+
+  # Lago Services
+  lago-db-setup:
+    image: postgres:15-alpine
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: echo "Database ready"
+    networks:
+      - compute-net
+
+  lago-migrate:
+    image: getlago/api:v1.35.0
+    command: ["./scripts/migrate.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment: &lago-env
+      RAILS_ENV: production
+      DATABASE_URL: postgresql://postgres:password@postgres:5432/shared_db
+      SECRET_KEY_BASE: "833544478c926fed42f46db5aa59d853c934042584e09e2d1a308d8a9250f7196237552621864b05408b9bc67339c130e75b8c63b01da95e7e877da80fb1b304"
+      LAGO_RSA_PRIVATE_KEY: "LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tCk1JSUV2UUlCQURBTkJna3Foa2lHOXcwQkFRRUZBQVNDQktjd2dnU2pBZ0VBQW9JQkFRQ0d1S1paakRvSVhNb3oKM1VRdUgrRTVXNCtqUGhLOW9EaTF0K1BTVTkzUEUxQnZWQUVDWTNCSStQbi9ONVgyVkdyMTU0Q1FMUGRxNXpFYwp4NkkvSXdXRzgvbmVlVTBrOVpUSHVQRmlielZYQkxTbE96d2NmZmcxclFmN2tuUnhTZ0NwTVlrbVFxM1ZScXp2CnlZZWZQSllWblAxT3ZBeUlLK05TRUhzRG5jQzZMeUxoOEN0S0pNSXZFUnB4Q1RNUVdIZmhPbm1QTzE1a0FMTUEKVjlpbHNiUFNRVWw3V2srTjh3V2VpT0hCNDZUYUQwRHdtejM2SWlZc1hzVHpiQjcxMW5PWnowMlFuZFJ0NHNBcQpsOXpINFdVbjd2LzVvMU1lbXNtU0hPV1YySWEyakpuQlN5NUg5MWhDSkY0dzRrZW9xMFNLQStQbFhock80OWZRCjljSlBJQSs3QWdNQkFBRUNnZ0VBSTNLYWNwMXU5NXhTcCtya2NhNTV1SG5iQlh6anVYbGE4cFY4SUc5b3dYKzMKZmxPQUlIekJvckhBTmVNT1ZrNUlCb1B2VkFCQTZhUURUQ3RMQ1luUmZuemJsaW9jbmtqdjZNMUUxajJrcjB6UgpxMWcyck5pSVlyY3dqb1V1bGxCK2RBWlFxL3lIZU1LcjVqd0VyMlZscURJeWhIRCtheVlCSGlxdjgzZWlxbG95Cit3am0xbVMrK3pzdUdYVXZYYko1ZTZnbjA0M25pRkNNbEtabDRyRWVFOFA1dlpUaDN4MHNKdlhNcEZXNW9jKzcKMEYxTjdmRm04bE1uTy95MG9tSmtKK0dCenJ0K0pJYTd4R2J5alNYTWtCRklqVUFwR3RyL09rV2VQMFV1UStCTwpGSXZDZ0pBMUFOcW9JM3FSdFIycmtSYlg2SG5RMlQ4Z2FsNEdXZG5Vd1FLQmdRQzcyOUNsbXFTVVpyU1hSWlhBCjZoTko1bFlqNEo0YmF0Rzl0VDJCcXhTQ2dBWHlrOHZrT0NUSFJEQmlmSzFFby9vRk1QVnBFN1BGUXZEcE9rQ2wKekVKeVh1VnJJVTVrL1ozVWQxcUpyNmdyNENNeCtCQXgwbEtxRjQ3bW91MGtHTGVmTENLMDV6MFQ0V3dNb1I4Rwo1eXllS3lYU3lzcXVxUlBocFdSWkdnRkRRd0tCZ1FDM2xwcUpNeGw4T2xnM2tOUU12VzZVNnlHUTgxcWx3UEpRCm0wajZKYTUyTVQ1bnI5RHZzeXQ4V01YVHZac2VtWmFxQlhjdWxGK3lvSG5GYUhnZ29zc1RFaGZETWlCa0dKdGcKd2IrQjhrWEpuTjFRUVRrQzJWL0pMU3FGanBJY0hQMzd3ZmNGc2V4YzhsVUQrY2ZPemZseG1QZTBtR0gvQkFZWQpIWFZBdGN6dUtRS0JnSEF3cDV1dkRpaithVTJLSmhRdTl0UUVkbDg0enRPcTZKVzJQb1JKQ3BlaEkyd3FiZkxlCndNQXNiZ1R6Vm5zT3Zzc0k0UmNleUJhL2txYUd2b01GeUkwTE5WSFVjMEFHNHBJM3NWOVhBMFVvdDN3cEhHclUKbzcrbkVCV1hLYTZNQUdWVDgybzhTeEtyWmw3b2ZtSWQvMXg2Z2owd0ZQbFlTbUpRNXV2N2h0T0hBb0dCQUxNSwpzMGRlaUZvNDVGTzhjTERFQlpaQ0FZaEZiSC8rUGRNU3ZnY0d2TEFUc2xLWWltRmFFT3pCL3B4VGEzWmFQeTh0CkNXQnAzekpyZ3BaZEhkcG1LVG8rQ09LYWZqQmdOeGdUbTlyMUZjNWJweEpmcVdQMzdveForZ0FxWEtBQ1BraEsKajhnRUR3bE9aRTd1U0VpTlk5bS9Yc1BIWUxxOWg5djR6cUwvS2c2UkFvR0FQcnQ5Y21ocllUM3VLTXU4dkkzKwpodDdIMEs0TklHMGNGbmNvWlFIMHRuT2o2QWJWai9BWEtwbEhUNDVuaUwvUEY2L05INDJaMXVCV01sdGdkNnY3CkRFRkFLTTR4bkh5S0dpMnVCRDVWQ3QxOGRZdkJMWnhLcEhYY05FekkyMDQ5a211cFFaRkZWajVMRkxwRkx4Q2YKNHlFRGE2MU95TURyOXdUS0xrTFlpWGc9Ci0tLS0tRU5EIFBSSVZBVEUgS0VZLS0tLS0t"
+      REDIS_URL: redis://redis:6379/0
+      LAGO_API_URL: http://lago-api:3000
+      LAGO_FRONT_URL: https://billing.computecommons.org
+      RAILS_MASTER_KEY: "00000000000000000000000000000000"
+      LAGO_LICENSE: "123"
+    networks:
+      - compute-net
+
+  lago-api:
+    image: getlago/api:v1.35.0
+    command: ["./scripts/start.api.sh"]
+    depends_on:
+      lago-migrate:
+        condition: service_completed_successfully
+    environment:
+      <<: *lago-env
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.lago-api.rule=Host(`api.billing.computecommons.org`)"
+      - "traefik.http.routers.lago-api.entrypoints=web"
+      - "traefik.http.services.lago-api.loadbalancer.server.port=3000"
+    networks:
+      - compute-net
+
+  lago-worker:
+    image: getlago/api:v1.35.0
+    command: ["./scripts/start.worker.sh"]
+    depends_on:
+      lago-migrate:
+        condition: service_completed_successfully
+    environment:
+      <<: *lago-env
+    networks:
+      - compute-net
+
+  lago-front:
+    image: getlago/front:v1.35.0
+    depends_on:
+      - lago-api
+    environment:
+      API_URL: https://api.billing.computecommons.org
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.lago-front.rule=Host(`billing.computecommons.org`)"
+      - "traefik.http.routers.lago-front.entrypoints=web"
+      - "traefik.http.services.lago-front.loadbalancer.server.port=80"
+    networks:
+      - compute-net
+
+  # APISIX & Etcd
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.9
+    command:
+      - /usr/local/bin/etcd
+      - --advertise-client-urls=http://etcd:2379
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --initial-advertise-peer-urls=http://etcd:2380
+      - --listen-peer-urls=http://0.0.0.0:2380
+      - --initial-cluster=default=http://etcd:2380
+    networks:
+      - compute-net
+
+  apisix:
+    image: apache/apisix:3.9.1-debian
+    volumes:
+       - ./config/apisix_conf/config.yaml:/usr/local/apisix/conf/config.yaml
+    depends_on:
+      - etcd
+    networks:
+      - compute-net
+    labels:
+      - "traefik.enable=true"
+      # Public API Gateway
+      - "traefik.http.routers.apisix.rule=Host(`api.computecommons.org`)"
+      - "traefik.http.routers.apisix.entrypoints=web"
+      - "traefik.http.routers.apisix.service=apisix-gateway-svc"
+      - "traefik.http.services.apisix-gateway-svc.loadbalancer.server.port=9080"
+      # Admin API
+      - "traefik.http.routers.apisix-admin.rule=Host(`admin.api.computecommons.org`)"
+      - "traefik.http.routers.apisix-admin.entrypoints=web"
+      - "traefik.http.routers.apisix-admin.service=apisix-admin-svc"
+      - "traefik.http.services.apisix-admin-svc.loadbalancer.server.port=9180"
+
+  # Mock Services
+  mock-compute:
+    build: ./services/mock-compute
+    environment:
+      LAGO_API_URL: http://lago-api:3000
+      LAGO_API_KEY: "replace_me_after_setup"
+    networks:
+      - compute-net
+
+  landing-ui:
+    build: ./services/landing-ui
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.landing.rule=Host(`computecommons.org`)"
+      - "traefik.http.routers.landing.entrypoints=web"
+      - "traefik.http.services.landing.loadbalancer.server.port=80"
+    networks:
+      - compute-net
+
+  # Terminal Service
+  terminal-service:
+    build: ./services/terminal-service
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./cc-cli:/app/cc-cli:ro
+    networks:
+      - compute-net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.terminal-ws.rule=Host(`api.computecommons.org`) && PathPrefix(`/ws/terminal`)"
+      - "traefik.http.routers.terminal-ws.entrypoints=web"
+      - "traefik.http.services.terminal-ws.loadbalancer.server.port=8001"
+
+networks:
+  compute-net:
+
+volumes:
+  postgres_data:
