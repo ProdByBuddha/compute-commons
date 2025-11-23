@@ -1,0 +1,15 @@
+{
+  "clientId": "dashboard",
+  "enabled": true,
+  "publicClient": true,
+  "redirectUris": [
+    "https://computecommons.org/*",
+    "https://computecommons.org/dashboard.html",
+    "http://localhost:8080/*"
+  ],
+  "webOrigins": [
+    "+"
+  ],
+  "standardFlowEnabled": true,
+  "directAccessGrantsEnabled": true
+}
